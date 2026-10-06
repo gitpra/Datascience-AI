@@ -1,0 +1,554 @@
+"""
+EDA Assignment Solution
+========================
+This script solves the EDA questions from the supplied assignment.
+
+Expected input datasets:
+1. Bike Details Dataset      -> bike.csv
+2. Car Sales Dataset         -> car_sales.csv
+3. Amazon Sales Data         -> amazon.csv
+4. Spotify Hip-hop Dataset   -> spotify.csv
+
+Place the CSV files in the same folder as this script, or change the paths below.
+
+Required packages:
+    pip install pandas numpy matplotlib seaborn
+"""
+
+from pathlib import Path
+import warnings
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+warnings.filterwarnings("ignore")
+sns.set_theme(style="whitegrid")
+
+BASE = Path(__file__).resolve().parent
+BIKE_FILE = BASE / "bike.csv"
+CAR_FILE = BASE / "car_sales.csv"
+AMAZON_FILE = BASE / "amazon.csv"
+SPOTIFY_FILE = BASE / "spotify.csv"
+
+OUTPUT = BASE / "eda_outputs"
+OUTPUT.mkdir(exist_ok=True)
+
+
+def save_show(name):
+    """Save current matplotlib figure and close it."""
+    plt.tight_layout()
+    plt.savefig(OUTPUT / name, dpi=150, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
+def find_col(df, candidates):
+    """Return the first matching column, case-insensitively."""
+    lookup = {str(c).strip().lower(): c for c in df.columns}
+    for candidate in candidates:
+        if candidate.lower() in lookup:
+            return lookup[candidate.lower()]
+    return None
+
+
+def numeric_clean(s):
+    return pd.to_numeric(
+        s.astype(str).str.replace(r"[₹,$,%]", "", regex=True)
+        .str.replace(",", "", regex=False)
+        .str.strip(),
+        errors="coerce",
+    )
+
+
+# ============================================================
+# EDA - 1 : BIKE DATASET
+# ============================================================
+
+def bike_eda():
+    print("\n" + "=" * 70)
+    print("EDA - 1 : BIKE DETAILS DATASET")
+    print("=" * 70)
+
+    df = pd.read_csv(BIKE_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    price = find_col(df, ["selling_price"])
+    year = find_col(df, ["year"])
+    seller = find_col(df, ["seller_type"])
+    owner = find_col(df, ["owner"])
+    km = find_col(df, ["km_driven"])
+    showroom = find_col(df, ["ex_showroom_price"])
+    name = find_col(df, ["name"])
+
+    for c in [price, year, km, showroom]:
+        if c:
+            df[c] = numeric_clean(df[c])
+
+    print("\nShape:", df.shape)
+    print("\nMissing values:")
+    print(df.isna().sum())
+
+    # 1. Range of selling prices
+    print("\n1. Selling price range:")
+    print("Minimum:", df[price].min())
+    print("Maximum:", df[price].max())
+    print("Range:", df[price].max() - df[price].min())
+
+    # 2. Median selling price
+    print("\n2. Median selling price:", df[price].median())
+
+    # 3. Most common seller type
+    print("\n3. Most common seller type:")
+    print(df[seller].mode().iloc[0])
+
+    # 4. Bikes > 50,000 km
+    print("\n4. Bikes driven > 50,000 km:", (df[km] > 50000).sum())
+
+    # 5. Average km by ownership type
+    print("\n5. Average km driven by ownership type:")
+    print(df.groupby(owner)[km].mean().sort_values(ascending=False))
+
+    # 6. Proportion from 2015 or older
+    proportion = (df[year] <= 2015).mean()
+    print("\n6. Proportion from 2015 or older:", proportion)
+    print("Percentage:", proportion * 100, "%")
+
+    # 7. Missing-value trend
+    print("\n7. Missing values:")
+    print(df.isna().sum())
+    df.isna().sum().plot(kind="bar", title="Missing Values by Column")
+    save_show("bike_missing_values.png")
+
+    # 8. Highest ex-showroom price and bike
+    idx = df[showroom].idxmax()
+    print("\n8. Highest ex-showroom price:")
+    print("Price:", df.loc[idx, showroom])
+    print("Bike:", df.loc[idx, name])
+
+    # 9. Bikes by seller type
+    print("\n9. Number of bikes by seller type:")
+    print(df[seller].value_counts())
+
+    # 10. Selling price vs km driven for first owners
+    first = df[df[owner].astype(str).str.contains("1st", case=False, na=False)]
+    print("\n10. First-owner correlation (selling price vs km driven):",
+          first[[price, km]].corr().iloc[0, 1])
+    sns.scatterplot(data=first, x=km, y=price)
+    plt.title("Selling Price vs KM Driven - First Owner")
+    save_show("bike_first_owner_price_vs_km.png")
+
+    # 11. IQR outlier removal
+    q1 = df[km].quantile(0.25)
+    q3 = df[km].quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    outliers = df[(df[km] < lower) | (df[km] > upper)]
+    clean = df[(df[km] >= lower) & (df[km] <= upper)].copy()
+
+    print("\n11. KM outlier limits:", lower, upper)
+    print("Outliers removed:", len(outliers))
+    print("Rows after removal:", len(clean))
+
+    # 12. Year vs selling price
+    sns.scatterplot(data=df, x=year, y=price)
+    plt.title("Year vs Selling Price")
+    save_show("bike_year_vs_selling_price.png")
+
+    # 13. Average depreciation by bike age
+    current_year = pd.Timestamp.today().year
+    df["age"] = current_year - df[year]
+    depreciation = df.groupby("age")[price].mean().sort_index()
+    print("\n13. Average selling price by bike age:")
+    print(depreciation)
+    sns.lineplot(x=depreciation.index, y=depreciation.values, marker="o")
+    plt.title("Average Selling Price by Bike Age")
+    plt.xlabel("Age (years)")
+    plt.ylabel("Average Selling Price")
+    save_show("bike_depreciation_by_age.png")
+
+    # 14. Bikes significantly above yearly average
+    yearly_avg = df.groupby(year)[price].transform("mean")
+    above = df[df[price] > yearly_avg * 1.20].sort_values(price, ascending=False)
+    print("\n14. Bikes priced >20% above their manufacturing-year average:")
+    print(above[[name, year, price]].head(20).to_string(index=False))
+
+    # 15. Correlation matrix
+    numeric = df.select_dtypes(include=np.number)
+    print("\n15. Correlation matrix:")
+    print(numeric.corr())
+    plt.figure(figsize=(9, 6))
+    sns.heatmap(numeric.corr(), annot=True, cmap="coolwarm", fmt=".2f")
+    plt.title("Bike Dataset Correlation Matrix")
+    save_show("bike_correlation_heatmap.png")
+
+    return df
+
+
+# ============================================================
+# EDA - 2 : CAR SALES DATASET
+# ============================================================
+
+def car_eda():
+    print("\n" + "=" * 70)
+    print("EDA - 2 : CAR SALES DATASET")
+    print("=" * 70)
+
+    df = pd.read_csv(CAR_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    price = find_col(df, ["Price ($)", "Price"])
+    company = find_col(df, ["Company"])
+    dealer = find_col(df, ["Dealer_Name"])
+    transmission = find_col(df, ["Transmission"])
+    region = find_col(df, ["Dealer_Region"])
+    body = find_col(df, ["Body Style"])
+    gender = find_col(df, ["Gender"])
+    income = find_col(df, ["Annual Income"])
+    engine = find_col(df, ["Engine"])
+    model = find_col(df, ["Model"])
+    color = find_col(df, ["Color"])
+    date = find_col(df, ["Date"])
+
+    df[price] = numeric_clean(df[price])
+    df[income] = numeric_clean(df[income])
+    df["sale_date"] = pd.to_datetime(df[date], errors="coerce")
+
+    print("\nShape:", df.shape)
+
+    # 1. Average price for each dealer
+    print("\n1. Average selling price by dealer:")
+    print(df.groupby(dealer)[price].mean().sort_values(ascending=False).head(20))
+
+    # 2. Company with highest price variation
+    variation = df.groupby(company)[price].agg(["std", "var", "mean"])
+    print("\n2. Company with highest price standard deviation:")
+    print(variation["std"].idxmax())
+    print(variation.loc[variation["std"].idxmax()])
+
+    # 3. Price distribution by transmission
+    sns.boxplot(data=df, x=transmission, y=price)
+    plt.title("Car Price Distribution by Transmission")
+    save_show("car_price_by_transmission.png")
+    print("\n3. IQR by transmission:")
+    print(df.groupby(transmission)[price].quantile([.25, .75]).unstack())
+
+    # 4. Price distribution across regions
+    sns.boxplot(data=df, x=region, y=price)
+    plt.xticks(rotation=45)
+    plt.title("Car Prices Across Regions")
+    save_show("car_price_by_region.png")
+
+    # 5. Body-style distribution
+    print("\n5. Body style counts:")
+    print(df[body].value_counts())
+    sns.countplot(data=df, x=body, order=df[body].value_counts().index)
+    plt.xticks(rotation=45)
+    plt.title("Cars by Body Style")
+    save_show("car_body_style_distribution.png")
+
+    # 6. Average price by gender and income
+    print("\n6. Average price by customer gender:")
+    print(df.groupby(gender)[price].mean())
+    income_bins = pd.qcut(df[income], q=4, duplicates="drop")
+    print("\nAverage price by income quartile:")
+    print(df.groupby(income_bins, observed=False)[price].mean())
+
+    # 7. Price + count by region
+    region_summary = df.groupby(region).agg(
+        average_price=(price, "mean"),
+        cars_sold=(price, "size")
+    ).sort_values("average_price", ascending=False)
+    print("\n7. Region summary:")
+    print(region_summary)
+
+    # 8. Average price by engine
+    print("\n8. Average price by engine:")
+    print(df.groupby(engine)[price].mean().sort_values(ascending=False))
+    sns.boxplot(data=df, x=engine, y=price)
+    plt.xticks(rotation=45)
+    plt.title("Price Distribution by Engine")
+    save_show("car_price_by_engine.png")
+
+    # 9. Income bracket
+    df["income_bracket"] = pd.qcut(df[income], q=4, duplicates="drop")
+    print("\n9. Price by income bracket:")
+    print(df.groupby("income_bracket", observed=False)[price].agg(["mean", "median", "count"]))
+
+    # 10. Top 5 models by sales
+    top5_models = df[model].value_counts().head(5)
+    print("\n10. Top 5 models by sales:")
+    print(top5_models)
+    top_models_df = df[df[model].isin(top5_models.index)]
+    sns.boxplot(data=top_models_df, x=model, y=price)
+    plt.xticks(rotation=45)
+    plt.title("Price Distribution - Top 5 Models")
+    save_show("car_top5_models_price.png")
+
+    # 11. Engine size vs price across colors
+    engine_numeric = df[engine].astype(str).str.extract(r"(\d+(?:\.\d+)?)")[0]
+    df["engine_size"] = pd.to_numeric(engine_numeric, errors="coerce")
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=df, x="engine_size", y=price, hue=color)
+    plt.title("Car Price vs Engine Size by Color")
+    save_show("car_engine_size_price_color.png")
+    print("\n11. Price variation by color:")
+    print(df.groupby(color)[price].std().sort_values(ascending=False))
+
+    # 12. Seasonal trend
+    df["month"] = df["sale_date"].dt.month
+    monthly = df.groupby("month").size()
+    print("\n12. Monthly sales:")
+    print(monthly)
+    monthly.plot(kind="line", marker="o")
+    plt.title("Monthly Car Sales Trend")
+    plt.xlabel("Month")
+    plt.ylabel("Number of Sales")
+    save_show("car_monthly_sales_trend.png")
+
+    # 13. Body style + transmission
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(data=df, x=body, y=price, hue=transmission)
+    plt.xticks(rotation=45)
+    plt.title("Price by Body Style and Transmission")
+    save_show("car_body_transmission_price.png")
+
+    # 14. Correlation among price, engine size, income
+    corr_cols = ["engine_size", income, price]
+    print("\n14. Correlation matrix:")
+    print(df[corr_cols].corr())
+    sns.heatmap(df[corr_cols].corr(), annot=True, cmap="coolwarm", fmt=".2f")
+    plt.title("Car Price, Engine Size and Annual Income Correlation")
+    save_show("car_correlation_heatmap.png")
+
+    # 15. Average price by model and engine
+    print("\n15. Average price by model and engine:")
+    print(df.groupby([model, engine])[price].mean().sort_values(ascending=False).head(30))
+
+    return df
+
+
+# ============================================================
+# EDA - 3 : AMAZON SALES DATA
+# ============================================================
+
+def amazon_eda():
+    print("\n" + "=" * 70)
+    print("EDA - AMAZON SALES DATA")
+    print("=" * 70)
+
+    df = pd.read_csv(AMAZON_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    category = find_col(df, ["category"])
+    product = find_col(df, ["product_name"])
+    discounted = find_col(df, ["discounted_price"])
+    actual = find_col(df, ["actual_price"])
+    discount = find_col(df, ["discount_percentage"])
+    rating = find_col(df, ["rating"])
+    rating_count = find_col(df, ["rating_count"])
+    review_title = find_col(df, ["review_title"])
+    review_content = find_col(df, ["review_content"])
+
+    for c in [discounted, actual, discount, rating, rating_count]:
+        df[c] = numeric_clean(df[c])
+
+    print("\nShape:", df.shape)
+    print("\nMissing values:")
+    print(df.isna().sum())
+
+    # 1. Average rating by category
+    print("\n1. Average rating by category:")
+    print(df.groupby(category)[rating].mean().sort_values(ascending=False))
+
+    # 2. Top rating_count products by category
+    top_by_category = (
+        df.sort_values(rating_count, ascending=False)
+        .groupby(category, as_index=False)
+        .head(1)
+    )
+    print("\n2. Highest rating_count product in each category:")
+    print(top_by_category[[category, product, rating_count]].to_string(index=False))
+
+    # 3. Discounted vs actual prices
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x=actual, y=discounted)
+    plt.title("Discounted Price vs Actual Price")
+    save_show("amazon_discounted_vs_actual.png")
+
+    # 4. Average discount by category
+    print("\n4. Average discount percentage by category:")
+    print(df.groupby(category)[discount].mean().sort_values(ascending=False))
+
+    # 5. Most popular product names
+    print("\n5. Most popular product names:")
+    print(df[product].value_counts().head(10))
+
+    # 6. Most popular product keywords
+    stop = {
+        "the", "and", "for", "with", "this", "that", "from", "your",
+        "you", "are", "has", "have", "best", "more", "than", "only",
+        "product", "amazon", "buy", "new", "use", "used"
+    }
+    words = (
+        df[product].dropna().astype(str).str.lower()
+        .str.replace(r"[^a-z0-9\s]", " ", regex=True)
+        .str.split().explode()
+    )
+    words = words[~words.isin(stop)]
+    print("\n6. Popular product keywords:")
+    print(words.value_counts().head(20))
+
+    # 7. Most popular reviews
+    print("\n7. Most common review titles:")
+    print(df[review_title].value_counts().head(10))
+
+    # 8. Correlation discounted price vs rating
+    print("\n8. Correlation between discounted price and rating:",
+          df[[discounted, rating]].corr().iloc[0, 1])
+
+    # 9. Top 5 categories by average rating
+    print("\n9. Top 5 categories by average rating:")
+    print(df.groupby(category)[rating].mean().sort_values(ascending=False).head(5))
+
+    # 10. Potential improvements
+    print("\n10. Potential improvement areas:")
+    print("- Handle missing prices/ratings before modeling.")
+    print("- Standardize price and percentage columns.")
+    print("- Investigate products with very high rating counts but low ratings.")
+    print("- Analyze review text for sentiment and recurring complaints.")
+    print("- Remove duplicate products/reviews where appropriate.")
+
+    return df
+
+
+# ============================================================
+# EDA - 4 : SPOTIFY HIP-HOP DATA
+# ============================================================
+
+def spotify_eda():
+    print("\n" + "=" * 70)
+    print("EDA - 4 : SPOTIFY DATA")
+    print("=" * 70)
+
+    df = pd.read_csv(SPOTIFY_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    artist = find_col(df, ["Artist"])
+    track = find_col(df, ["Track Name"])
+    popularity = find_col(df, ["Popularity"])
+    duration = find_col(df, ["Duration (ms)"])
+    track_id = find_col(df, ["Track ID"])
+
+    df[popularity] = numeric_clean(df[popularity])
+    df[duration] = numeric_clean(df[duration])
+
+    # 1. Nulls and duplicates
+    print("\n1. Missing values:")
+    print(df.isna().sum())
+    print("\nDuplicate rows:", df.duplicated().sum())
+
+    df = df.drop_duplicates().copy()
+    df = df.dropna(subset=[artist, track, popularity, duration])
+
+    # 2. Popularity distribution
+    print("\n2. Popularity statistics:")
+    print(df[popularity].describe())
+    sns.histplot(df[popularity], bins=20, kde=True)
+    plt.title("Distribution of Track Popularity")
+    save_show("spotify_popularity_histogram.png")
+
+    # 3. Popularity vs duration
+    print("\n3. Correlation popularity vs duration:",
+          df[[popularity, duration]].corr().iloc[0, 1])
+    sns.scatterplot(data=df, x=duration, y=popularity)
+    plt.title("Popularity vs Track Duration")
+    save_show("spotify_popularity_vs_duration.png")
+
+    # 4. Artist with highest number of tracks
+    artist_counts = df[artist].value_counts()
+    print("\n4. Artist with most tracks:", artist_counts.index[0])
+    print(artist_counts)
+    sns.countplot(data=df, y=artist,
+                  order=artist_counts.head(20).index)
+    plt.title("Track Count by Artist (Top 20)")
+    save_show("spotify_artist_track_counts.png")
+
+    # 5. Top 5 least popular tracks
+    print("\n5. Top 5 least popular tracks:")
+    print(df.nsmallest(5, popularity)[[artist, track, popularity]].to_string(index=False))
+
+    # 6. Top 5 most popular artists based on average popularity
+    artist_avg = df.groupby(artist)[popularity].mean().sort_values(ascending=False)
+    top5_artists = artist_avg.head(5)
+    print("\n6. Top 5 artists by average popularity:")
+    print(top5_artists)
+
+    # 7. Most popular track for each top-5 artist
+    print("\n7. Most popular track for each top-5 artist:")
+    for a in top5_artists.index:
+        row = df[df[artist] == a].nlargest(1, popularity)
+        print(a, "->", row[track].iloc[0], "| Popularity:", row[popularity].iloc[0])
+
+    # 8. Pair plot
+    pair_cols = [popularity, duration]
+    sns.pairplot(df[pair_cols].dropna())
+    plt.savefig(OUTPUT / "spotify_pairplot.png", dpi=150, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+    # 9. Duration across artists
+    selected_artists = df[artist].value_counts().head(10).index
+    selected = df[df[artist].isin(selected_artists)]
+    plt.figure(figsize=(12, 6))
+    sns.boxplot(data=selected, x=artist, y=duration)
+    plt.xticks(rotation=45, ha="right")
+    plt.title("Track Duration Across Top Artists")
+    save_show("spotify_duration_by_artist.png")
+
+    # 10. Popularity distribution across artists
+    plt.figure(figsize=(12, 6))
+    sns.violinplot(data=selected, x=artist, y=popularity)
+    plt.xticks(rotation=45, ha="right")
+    plt.title("Popularity Distribution Across Top Artists")
+    save_show("spotify_popularity_by_artist.png")
+
+    return df
+
+
+def main():
+    print("EDA assignment started.")
+    print("Put the four CSV files beside this script:")
+    print("  - bike.csv")
+    print("  - car_sales.csv")
+    print("  - amazon.csv")
+    print("  - spotify.csv")
+    print(f"\nCharts will be saved to: {OUTPUT}")
+
+    # Run only when the corresponding file exists.
+    if BIKE_FILE.exists():
+        bike_eda()
+    else:
+        print("\n[SKIP] bike.csv not found.")
+
+    if CAR_FILE.exists():
+        car_eda()
+    else:
+        print("\n[SKIP] car_sales.csv not found.")
+
+    if AMAZON_FILE.exists():
+        amazon_eda()
+    else:
+        print("\n[SKIP] amazon.csv not found.")
+
+    if SPOTIFY_FILE.exists():
+        spotify_eda()
+    else:
+        print("\n[SKIP] spotify.csv not found.")
+
+    print("\nEDA assignment completed.")
+
+
+if __name__ == "__main__":
+    main()
